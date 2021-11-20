@@ -1,5 +1,6 @@
 dataset:
-  n-folds: 5
+  n-folds: 5000
+  val-samples: 10000
 
 text-model:
   model-name: "xlm-roberta-base"

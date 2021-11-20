@@ -17,13 +17,13 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
     img_embs = None
     cap_embs = None
 
-    ids_pointer = 0
+    # ids_pointer = 0
     pbar = tqdm.tqdm(data_loader)
     pbar.set_description('Encoding validation data')
     for i, data in enumerate(pbar):
-        bs = len(data[0])
-        ids = list(range(ids_pointer, ids_pointer + bs))
-        ids_pointer += bs
+        # bs = len(data[0])
+        # ids = list(range(ids_pointer, ids_pointer + bs))
+        # ids_pointer += bs
 
         # compute the embeddings
         with torch.no_grad():
@@ -31,12 +31,15 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
 
             # initialize the numpy arrays given the size of the embeddings
             if img_embs is None:
-                img_embs = torch.zeros((len(data_loader.dataset), img_emb.size(1)))
-                cap_embs = torch.zeros((len(data_loader.dataset), cap_emb.size(1)))
+                img_embs = img_emb.cpu()
+                cap_embs = cap_emb.cpu()
+            else:
+                img_embs = torch.cat([img_embs, img_emb.cpu()], dim=0)
+                cap_embs = torch.cat([cap_embs, cap_emb.cpu()], dim=0)
 
             # preserve the embeddings by copying from gpu and converting to numpy
-            img_embs[ids, :] = img_emb.cpu()
-            cap_embs[ids, :] = cap_emb.cpu()
+            # img_embs[ids, :] = img_emb.cpu()
+            # cap_embs[ids, :] = cap_emb.cpu()
 
             # measure accuracy and record loss
             # model.forward_loss(None, None, img_emb, cap_emb, img_length, cap_length)

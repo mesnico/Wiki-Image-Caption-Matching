@@ -71,8 +71,10 @@ def main():
         # split in train and val subset
         train_df = train_df.sample(frac=1, random_state=42)
         all_idxs = np.arange(len(train_df))
-        valid_idx = all_idxs[:5000]
-        train_idx = all_idxs[5000:]
+        val_samples = config['dataset']['val-samples']
+        logging.info('Using {} samples for validating'.format(val_samples))
+        valid_idx = all_idxs[:val_samples]
+        train_idx = all_idxs[val_samples:]
         train_df.loc[valid_idx, 'Fold'] = 0
         train_df.loc[train_idx, 'Fold'] = 1
         # train using fold 0 as validation fold
@@ -165,7 +167,7 @@ def train(opt, config, data_df, fold=0):
 
     # Train loop
     mean_loss = 0
-    min_mean_rank = 100
+    best_r5 = 0
 
     for epoch in tqdm.trange(start_epoch, opt.num_epochs):
         progress_bar = tqdm.tqdm(train_dataloader)
@@ -201,17 +203,17 @@ def train(opt, config, data_df, fold=0):
                 print(metrics)
 
                 # save best model
-                if metrics['meanr'] < min_mean_rank:
+                if metrics['r5'] > best_r5:
                     print('Saving best model...')
                     checkpoint = {
                         'cfg': config,
                         'epoch': epoch,
-                        'model': model.state_dict()}
-                        # 'optimizer': optimizer.state_dict(),
-                        # 'scheduler': scheduler.state_dict()}
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict()}
                     latest = os.path.join(experiment_path, 'model_best_fold{}.pt'.format(fold))
                     torch.save(checkpoint, latest)
-                    min_mean_rank = metrics['meanr']
+                    best_r5 = metrics['r5']
 
         scheduler.step()
 
