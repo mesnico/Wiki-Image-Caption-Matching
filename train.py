@@ -9,15 +9,16 @@ from torchvision import transforms as T
 import torch
 import clip
 from transformers import AutoTokenizer
-from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.model_selection import StratifiedKFold, KFold, train_test_split
 import logging
 from torch.utils.tensorboard import SummaryWriter
 
 import argparse
-from dataset import WikipediaDataset
+from dataset import WikipediaDataset, collate_fn_without_nones
 import utils
 
 from model import MatchingModel
+import evaluation
 
 from shutil import copyfile
 
@@ -25,14 +26,14 @@ from shutil import copyfile
 def main():
     # Hyper Parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_epochs', default=40, type=int,
+    parser.add_argument('--num_epochs', default=30, type=int,
                         help='Number of training epochs.')
     parser.add_argument('--data_dir', default='data', help='Root dir for data')
     # parser.add_argument('--crop_size', default=224, type=int,
     #                     help='Size of an image crop as the CNN input.')
     parser.add_argument('--workers', default=10, type=int,
                         help='Number of data loader workers.')
-    parser.add_argument('--log_step', default=10, type=int,
+    parser.add_argument('--log_step', default=1, type=int,
                         help='Number of steps to print and record the log.')
     parser.add_argument('--val_step', default=200, type=int,
                         help='Number of steps to run validation.')
@@ -56,17 +57,24 @@ def main():
         config = yaml.safe_load(ymlfile)
 
     # load the train dataframe, and associate samples to folds
-    train_df = utils.create_train_pd(opt.data_dir)
-    num_folds = config['dataset']['n-folds']
-    kfold = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=42)
-    for k, (train_idx, valid_idx) in enumerate(kfold.split(X=train_df, y=train_df['language'])):
-        train_df.loc[valid_idx, 'Fold'] = k
+    train_df = utils.create_train_pd(opt.data_dir, downsampled=False)
 
     if opt.cross_validation:
+        num_folds = config['dataset']['n-folds']
+        kfold = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=42)
+        for k, (train_idx, valid_idx) in enumerate(kfold.split(X=train_df, y=train_df['language'])):
+            train_df.loc[valid_idx, 'Fold'] = k
         logging.info('Using {} folds'.format(num_folds))
         for fold in tqdm.trange(num_folds):
             train(opt, config, train_df, fold=fold)
     else:
+        # split in train and val subset
+        train_df = train_df.sample(frac=1, random_state=42)
+        all_idxs = np.arange(len(train_df))
+        valid_idx = all_idxs[:5000]
+        train_idx = all_idxs[5000:]
+        train_df.loc[valid_idx, 'Fold'] = 0
+        train_df.loc[train_idx, 'Fold'] = 1
         # train using fold 0 as validation fold
         train(opt, config, train_df, fold=0)
 
@@ -87,11 +95,11 @@ def train(opt, config, data_df, fold=0):
     tokenizer = AutoTokenizer.from_pretrained(config['text-model']['model-name'])
 
     x_train, x_valid = data_df.query(f"Fold != {fold}"), data_df.query(f"Fold == {fold}")
-    train_dataset = WikipediaDataset(x_train, tokenizer, max_length=80, split='trainval', transforms=clip_transform)
-    val_dataset = WikipediaDataset(x_valid, tokenizer, max_length=80, split='trainval', transforms=clip_transform)
+    train_dataset = WikipediaDataset(x_train, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None)
+    val_dataset = WikipediaDataset(x_valid, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=config['training']['bs'], shuffle=True, num_workers=opt.workers)
-    val_dataloader = DataLoader(val_dataset, batch_size=config['training']['bs'], shuffle=False, num_workers=opt.workers)
+    train_dataloader = DataLoader(train_dataset, batch_size=config['training']['bs'], shuffle=True, num_workers=opt.workers, collate_fn=collate_fn_without_nones)
+    val_dataloader = DataLoader(val_dataset, batch_size=config['training']['bs'], shuffle=False, num_workers=opt.workers, collate_fn=collate_fn_without_nones)
 
     # Construct the model
     model = MatchingModel(config)
@@ -128,40 +136,41 @@ def train(opt, config, data_df, fold=0):
 
     # # optionally resume from a checkpoint
     start_epoch = 0
-    # if opt.resume or opt.load_model:
-    #     filename = opt.resume if opt.resume else opt.load_model
-    #     if os.path.isfile(filename):
-    #         print("=> loading checkpoint '{}'".format(filename))
-    #         checkpoint = torch.load(filename, map_location='cpu')
-    #         model.load_state_dict(checkpoint['model'], strict=False)
-    #         if torch.cuda.is_available():
-    #             model.cuda()
-    #         if opt.resume:
-    #             start_epoch = checkpoint['epoch']
-    #             # best_rsum = checkpoint['best_rsum']
-    #             optimizer.load_state_dict(checkpoint['optimizer'])
-    #             if checkpoint['scheduler'] is not None and not opt.reinitialize_scheduler:
-    #                 scheduler.load_state_dict(checkpoint['scheduler'])
-    #             # Eiters is used to show logs as the continuation of another
-    #             # training
-    #             model.Eiters = checkpoint['Eiters']
-    #             print("=> loaded checkpoint '{}' (epoch {})"
-    #                   .format(opt.resume, start_epoch))
-    #         else:
-    #             print("=> loaded only model from checkpoint '{}'"
-    #                   .format(opt.load_model))
-    #     else:
-    #         print("=> no checkpoint found at '{}'".format(opt.resume))
+    if opt.resume or opt.load_model:
+        filename = opt.resume if opt.resume else opt.load_model
+        if os.path.isfile(filename):
+            print("=> loading checkpoint '{}'".format(filename))
+            checkpoint = torch.load(filename, map_location='cpu')
+            model.load_state_dict(checkpoint['model'], strict=False)
+            if torch.cuda.is_available():
+                model.cuda()
+            if opt.resume:
+                start_epoch = checkpoint['epoch']
+                # best_rsum = checkpoint['best_rsum']
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                if checkpoint['scheduler'] is not None and not opt.reinitialize_scheduler:
+                    scheduler.load_state_dict(checkpoint['scheduler'])
+                # Eiters is used to show logs as the continuation of another
+                # training
+                model.Eiters = checkpoint['Eiters']
+                print("=> loaded checkpoint '{}' (epoch {})"
+                      .format(opt.resume, start_epoch))
+            else:
+                print("=> loaded only model from checkpoint '{}'"
+                      .format(opt.load_model))
+        else:
+            print("=> no checkpoint found at '{}'".format(opt.resume))
 
     model.train()
 
     # Train loop
     mean_loss = 0
-    progress_bar = tqdm.trange(start_epoch, opt.num_epochs)
-    progress_bar.set_description('Train')
+    min_mean_rank = 100
 
-    for epoch in progress_bar:
-        for it, data in enumerate(tqdm.tqdm(train_dataloader)):
+    for epoch in tqdm.trange(start_epoch, opt.num_epochs):
+        progress_bar = tqdm.tqdm(train_dataloader)
+        progress_bar.set_description('Train')
+        for it, data in enumerate(progress_bar):
             global_iteration = epoch * len(train_dataloader) + it
 
             # forward the model
@@ -183,52 +192,35 @@ def train(opt, config, data_df, fold=0):
             tb_logger.add_scalar("Training/Loss", loss.item(), global_iteration)
             tb_logger.add_scalar("Training/Learning_Rate", optimizer.param_groups[0]['lr'], global_iteration)
 
-            if False: #global_iteration % opt.val_step == 0:    # TODO: validation
-                # validate (using different thresholds)
-                metrics = validate(val_dataloader, model, classes, thresholds=[0.3, 0.5, 0.8])
-                tb_logger.add_scalars("Validation/F1", metrics, global_iteration)
+            if global_iteration % opt.val_step == 0:
+                # validate
+                metrics = validate(val_dataloader, model)
+                for m, v in metrics.items():
+                    tb_logger.add_scalar("Validation/{}".format(m), v, global_iteration)
+                # progress_bar.set_postfix(dict(r1='{:.2}'.format(metrics['r1']), r5='{:.2}'.format(metrics['r5']), meanr='{:.2}'.format(metrics['meanr'])))
                 print(metrics)
-                # progress_bar.set_postfix(dict(macroF1='{:.2}'.format(metrics['macroF1_thr=0.5']), microF1='{:.2}'.format(metrics['microF1_thr=0.5'])))
 
                 # save best model
-                if metrics['macroF1_thr=0.3'] + metrics['microF1_thr=0.3'] > best_f1:
+                if metrics['meanr'] < min_mean_rank:
                     print('Saving best model...')
                     checkpoint = {
                         'cfg': config,
                         'epoch': epoch,
-                        'model': model.joint_processing_module.state_dict() if not config['text-model']['fine-tune'] and not config['image-model']['fine-tune'] else model.state_dict()}
+                        'model': model.state_dict()}
                         # 'optimizer': optimizer.state_dict(),
                         # 'scheduler': scheduler.state_dict()}
-                    latest = os.path.join(experiment_path, 'model_best_fold{}.pt'.format(val_fold))
+                    latest = os.path.join(experiment_path, 'model_best_fold{}.pt'.format(fold))
                     torch.save(checkpoint, latest)
-                    best_f1 = metrics['macroF1_thr=0.3'] + metrics['microF1_thr=0.3']
+                    min_mean_rank = metrics['meanr']
 
         scheduler.step()
 
 
-def validate(val_dataloader, model, classes_list, thresholds=[0.3, 0.5, 0.8]):
+def validate(val_dataloader, model):
     model.eval()
 
-    # TODO!!
-    # predictions = []
-    # metrics = {}
-    # progress_bar = tqdm.tqdm(thresholds)
-    # progress_bar.set_description('Validation')
-    # for thr in progress_bar:
-    #     for it, (image, text, text_len, labels, ids) in enumerate(val_dataloader):
-    #         if torch.cuda.is_available():
-    #             image = image.cuda() if image is not None else None
-    #             text = text.cuda()
-    #             labels = labels.cuda()
-    #         with torch.no_grad():
-    #             pred_classes = model(image, text, text_len, inference_threshold=thr)
-    #
-    #         for id, labels in zip(ids, pred_classes):    # loop over every element of the batch
-    #             predictions.append({'id': id, 'labels': labels})
-    #
-    #     macro_f1, micro_f1 = evaluate(predictions, val_dataloader.dataset.targets, classes_list)
-    #     metrics['macroF1_thr={}'.format(thr)] = macro_f1
-    #     metrics['microF1_thr={}'.format(thr)] = micro_f1
+    query_feats, caption_feats = evaluation.encode_data(model, val_dataloader)
+    metrics = evaluation.compute_recall(query_feats, caption_feats)
 
     model.train()
     return metrics

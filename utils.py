@@ -2,24 +2,28 @@ import pandas as pd
 import glob
 import os
 
-def read_train_feather_files(feathers_file_root):
+def read_train_feather_files(feathers_file_root, drop_duplicates=False):
     feathers = glob.glob(feathers_file_root + '/train*')
     print(feathers)
     train_df = pd.DataFrame()
     for file in feathers:
         df = pd.read_feather(file)
         train_df = pd.concat([train_df, df])
-    print("Before removing duplicate rows:", train_df.shape)
-    train_df = train_df.drop_duplicates()  # Drop duplicate rows if any
-    print("After removing duplicate rows:", train_df.shape)
-    train_df = train_df.sample(frac=1).reset_index(drop=True)
+    if drop_duplicates:
+        print("Before removing duplicate rows:", train_df.shape)
+        train_df = train_df.drop_duplicates()  # Drop duplicate rows if any
+        print("After removing duplicate rows:", train_df.shape)
+    else:
+        print("Training dataframe shape:", train_df.shape)
+    train_df = train_df.reset_index(drop=True)
     print("Null:", train_df.isnull().any().any())
 
     train_df.head()
     return train_df
 
-def create_train_pd(data_root):
-    train_dir = os.path.join(data_root, 'train')
+def create_train_pd(data_root, downsampled=True):
+    intermediate_dir = 'downsampled' if downsampled else 'full'
+    train_dir = os.path.join(data_root, 'train', intermediate_dir)
     train_pd = read_train_feather_files(train_dir)
     return train_pd
 

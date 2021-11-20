@@ -2,6 +2,8 @@ import os
 import logging
 
 import random
+from io import BytesIO
+
 from PIL import Image
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -16,24 +18,31 @@ import pandas as pd
 # Pytorch Imports
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data._utils.collate import default_collate
 
 def url_to_image(cache_path, img_url):   # TODO here, get hash of url and store the file in the cache_path
-    file_name = uuid.uuid5(uuid.NAMESPACE_URL, img_url)
-    file_name = os.path.join(cache_path, '{}.jpg'.format(file_name))
-    if os.path.exists(file_name):
-        try:
-            img = Image.open(file_name).convert("RGB")
-            return img
-        except:
-            pass
+    if cache_path is not None:
+        file_name = uuid.uuid5(uuid.NAMESPACE_URL, img_url)
+        file_name = os.path.join(cache_path, '{}.jpg'.format(file_name))
+        if os.path.exists(file_name):
+            try:
+                img = Image.open(file_name).convert("RGB")
+                return img
+            except:
+                pass
     # file_name = str(uuid.uuid4())
     try:
         req = request.Request(img_url)
         req.add_header('User-Agent', 'abc-bot')
         response = request.urlopen(req)
-        with open(file_name, 'wb') as f:
-            f.write(response.read())
-        img = Image.open(file_name).convert("RGB")
+        if cache_path is not None:
+            # save on disk, on the cache path
+            with open(file_name, 'wb') as f:
+                f.write(response.read())
+            img = Image.open(file_name).convert("RGB")
+        else:
+            # do not save on disk
+            img = Image.open(BytesIO(response.read()))
         # os.remove(file_name)
         return img
     except:
@@ -49,7 +58,7 @@ class WikipediaDataset(Dataset):
         self.split=split
 
         self.training_img_cache = training_img_cache
-        if not os.path.exists(training_img_cache):
+        if training_img_cache is not None and not os.path.exists(training_img_cache):
             os.makedirs(training_img_cache)
 
     def __len__(self):
@@ -63,10 +72,12 @@ class WikipediaDataset(Dataset):
 
         img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
         if self.split != 'test':
-            while img is None:  # TODO: better way to handle missing images?
-                logging.warning('Image {} not existing. Choosing a random one.'.format(self.data.at[index, "image_url"]))
-                index = random.randint(0, len(self.data) - 1)
-                img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
+            # while img is None:  # TODO: better way to handle missing images?
+            #     # logging.warning('Image {} not existing. Choosing a random one.'.format(self.data.at[index, "image_url"]))
+            #     index = random.randint(0, len(self.data) - 1)
+            #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
+            if img is None:
+                return None
         else:
             if img is None:
                 raise FileNotFoundError('Image {} was not found. And now?'.format(self.data.at[index, "image_url"]))
@@ -85,7 +96,7 @@ class WikipediaDataset(Dataset):
         caption_ids = caption_inputs['input_ids']
         caption_mask = caption_inputs['attention_mask']
 
-        url = self.data.at[index, "image_url"]
+        url = self.data.at[index, "page_url"]
         url = url.rsplit('/', 1)[1]
         url_inputs = self.tokenizer.encode_plus(
             url,
@@ -108,23 +119,32 @@ class WikipediaDataset(Dataset):
         return img, url_ids, url_mask, caption_ids, caption_mask
 
 
+def collate_fn_without_nones(batch):
+    batch = [d for d in batch if d is not None]
+    return default_collate(batch)
+
 
 # testing
 from transformers import AutoTokenizer
 import utils
+import clip
 
 if __name__ == '__main__':
     feather_files_train_root = 'data'
     test_csv = 'data/test/test.tsv'
 
-    train_pd = utils.create_train_pd('data')
-    test_pd = utils.create_test_pd('data')
+    train_pd = utils.create_train_pd('data', downsampled=False)
+    #test_pd = utils.create_test_pd('data')
 
     tokenizer = AutoTokenizer.from_pretrained('xlm-roberta-base')
+    _, clip_transform = clip.load('ViT-B/32')
 
-    if False:
+    if True:
         # train
-        dataset = WikipediaDataset(train_pd, tokenizer, max_length=80, split='trainval')
+        dataset = WikipediaDataset(train_pd, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None)
     else:
         dataset = WikipediaDataset(test_pd, tokenizer, max_length=80, split='test')
-    print(dataset[0])
+
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=0, collate_fn=collate_fn_without_nones)
+    for d in dataloader:
+        print(d)
