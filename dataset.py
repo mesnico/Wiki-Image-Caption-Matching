@@ -50,7 +50,7 @@ def url_to_image(cache_path, img_url):   # TODO here, get hash of url and store 
 
 
 class WikipediaDataset(Dataset):
-    def __init__(self, data, tokenizer, max_length, transforms=None, training_img_cache='data/img_cache', split='train'):
+    def __init__(self, data, tokenizer, max_length, transforms=None, training_img_cache='data/img_cache', split='train', include_images=True):
         self.data = data.reset_index(drop=True)
         self.max_len = max_length
         self.tokenizer = tokenizer
@@ -58,8 +58,10 @@ class WikipediaDataset(Dataset):
         self.split=split
 
         self.training_img_cache = training_img_cache
-        if training_img_cache is not None and not os.path.exists(training_img_cache):
+        if training_img_cache is not None and include_images and not os.path.exists(training_img_cache):
             os.makedirs(training_img_cache)
+
+        self.include_images = include_images
 
     def __len__(self):
         return len(self.data)
@@ -70,17 +72,23 @@ class WikipediaDataset(Dataset):
         if torch.is_tensor(index):
             index = index.tolist()
 
-        img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
-        if self.split != 'test':
-            # while img is None:  # TODO: better way to handle missing images?
-            #     # logging.warning('Image {} not existing. Choosing a random one.'.format(self.data.at[index, "image_url"]))
-            #     index = random.randint(0, len(self.data) - 1)
-            #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
-            if img is None:
-                return None
+        if self.include_images:
+            img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
+            if self.split != 'test':
+                # while img is None:  # TODO: better way to handle missing images?
+                #     # logging.warning('Image {} not existing. Choosing a random one.'.format(self.data.at[index, "image_url"]))
+                #     index = random.randint(0, len(self.data) - 1)
+                #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
+                if img is None:
+                    return None
+            else:
+                if img is None:
+                    raise FileNotFoundError('Image {} was not found. And now?'.format(self.data.at[index, "image_url"]))
+
+            if self.transforms:
+                img = self.transforms(img)
         else:
-            if img is None:
-                raise FileNotFoundError('Image {} was not found. And now?'.format(self.data.at[index, "image_url"]))
+            img = None
 
         # img = np.array(img)
         # caption = random.choice(self.data.at[index, "caption_title_and_reference_description"])
@@ -108,9 +116,6 @@ class WikipediaDataset(Dataset):
         url_ids = url_inputs['input_ids']
         url_mask = url_inputs['attention_mask']
 
-        if self.transforms:
-            img = self.transforms(img)
-
         url_ids = torch.tensor(url_ids, dtype=torch.long)
         url_mask = torch.tensor(url_mask, dtype=torch.long)
         caption_ids = torch.tensor(caption_ids, dtype=torch.long)
@@ -121,7 +126,11 @@ class WikipediaDataset(Dataset):
 
 def collate_fn_without_nones(batch):
     batch = [d for d in batch if d is not None]
-    return default_collate(batch)
+    if all([e[0] is None for e in batch]):
+        batch = [d[1:] for d in batch]  # discard the images
+        return [None] + default_collate(batch)
+    else:
+        return default_collate(batch)
 
 
 # testing
@@ -141,7 +150,7 @@ if __name__ == '__main__':
 
     if True:
         # train
-        dataset = WikipediaDataset(train_pd, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None)
+        dataset = WikipediaDataset(train_pd, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None, include_images=False)
     else:
         dataset = WikipediaDataset(test_pd, tokenizer, max_length=80, split='test')
 
