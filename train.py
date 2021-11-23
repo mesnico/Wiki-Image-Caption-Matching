@@ -97,8 +97,8 @@ def train(opt, config, data_df, fold=0):
     tokenizer = AutoTokenizer.from_pretrained(config['text-model']['model-name'])
 
     x_train, x_valid = data_df.query(f"Fold != {fold}"), data_df.query(f"Fold == {fold}")
-    train_dataset = WikipediaDataset(x_train, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None)
-    val_dataset = WikipediaDataset(x_valid, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None)
+    train_dataset = WikipediaDataset(x_train, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None, include_images=not config['image-model']['disabled'])
+    val_dataset = WikipediaDataset(x_valid, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None, include_images=not config['image-model']['disabled'])
 
     train_dataloader = DataLoader(train_dataset, batch_size=config['training']['bs'], shuffle=True, num_workers=opt.workers, collate_fn=collate_fn_without_nones)
     val_dataloader = DataLoader(val_dataset, batch_size=config['training']['bs'], shuffle=False, num_workers=opt.workers, collate_fn=collate_fn_without_nones)

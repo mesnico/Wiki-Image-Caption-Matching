@@ -53,10 +53,8 @@ class ContrastiveLoss(Contrastive):
     """
 
     def __init__(self, margin=0, max_violation=False):
-        super(ContrastiveLoss, self).__init__()
+        super(ContrastiveLoss, self).__init__(margin=margin, max_violation=max_violation)
         self.sim = dot_sim
-
-        self.max_violation = max_violation
 
     def forward(self, im, s, return_similarity_mat=False):
         # compute image-sentence score matrix
