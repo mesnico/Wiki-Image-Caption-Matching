@@ -105,7 +105,8 @@ class WikipediaDataset(Dataset):
         caption_mask = caption_inputs['attention_mask']
 
         url = self.data.at[index, "page_url"]
-        url = url.rsplit('/', 1)[1]
+        url = url.rsplit('/', 1)
+        url = url[0] if len(url)==1 else url[1]
         url_inputs = self.tokenizer.encode_plus(
             url,
             truncation=True,

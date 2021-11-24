@@ -150,11 +150,11 @@ def train(opt, config, data_df, fold=0):
                 start_epoch = checkpoint['epoch']
                 # best_rsum = checkpoint['best_rsum']
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                if checkpoint['scheduler'] is not None and not opt.reinitialize_scheduler:
+                if checkpoint['scheduler'] is not None:
                     scheduler.load_state_dict(checkpoint['scheduler'])
                 # Eiters is used to show logs as the continuation of another
                 # training
-                model.Eiters = checkpoint['Eiters']
+                # model.Eiters = checkpoint['Eiters']
                 print("=> loaded checkpoint '{}' (epoch {})"
                       .format(opt.resume, start_epoch))
             else:
