@@ -53,7 +53,7 @@ dependencies:
     - cachetools==4.2.4
     - charset-normalizer==2.0.7
     - click==8.0.3
-    - clip==1.0
+    - git+https://github.com/openai/CLIP.git
     - filelock==3.4.0
     - ftfy==6.0.3
     - google-auth==2.3.3

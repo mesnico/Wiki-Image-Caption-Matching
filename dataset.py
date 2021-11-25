@@ -8,6 +8,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from urllib import request
 import uuid
+import logging
 
 # For data manipulation
 import numpy as np
@@ -18,7 +19,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data._utils.collate import default_collate
 
-def url_to_image(cache_path, img_url):   # TODO here, get hash of url and store the file in the cache_path
+def url_to_image(cache_path, img_url, force_cache=False):   # TODO here, get hash of url and store the file in the cache_path
     if cache_path is not None:
         file_name = uuid.uuid5(uuid.NAMESPACE_URL, img_url)
         file_name = os.path.join(cache_path, '{}.jpg'.format(file_name))
@@ -27,7 +28,13 @@ def url_to_image(cache_path, img_url):   # TODO here, get hash of url and store 
                 img = Image.open(file_name).convert("RGB")
                 return img
             except:
-                pass
+                img = None
+        else:
+            img = None
+
+        if force_cache:
+            return img
+
     # file_name = str(uuid.uuid4())
     try:
         req = request.Request(img_url)
@@ -71,10 +78,10 @@ class WikipediaDataset(Dataset):
             index = index.tolist()
 
         if self.include_images:
-            img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
+            img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"], force_cache=True)
             if self.split != 'test':
                 # while img is None:  # TODO: better way to handle missing images?
-                #     # logging.warning('Image {} not existing. Choosing a random one.'.format(self.data.at[index, "image_url"]))
+                logging.warning('Image {} not existing.'.format(self.data.at[index, "image_url"]))
                 #     index = random.randint(0, len(self.data) - 1)
                 #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
                 if img is None:

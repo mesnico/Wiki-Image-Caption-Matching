@@ -31,7 +31,7 @@ def main():
     parser.add_argument('--data_dir', default='data', help='Root dir for data')
     # parser.add_argument('--crop_size', default=224, type=int,
     #                     help='Size of an image crop as the CNN input.')
-    parser.add_argument('--workers', default=10, type=int,
+    parser.add_argument('--workers', default=0, type=int,
                         help='Number of data loader workers.')
     parser.add_argument('--log_step', default=1, type=int,
                         help='Number of steps to print and record the log.')
@@ -47,6 +47,8 @@ def main():
                         help='path to latest checkpoint (default: none). Loads only the model')
     parser.add_argument('--config', type=str, help="Which configuration to use. See into 'config' folder")
     parser.add_argument('--cross_validation', action='store_true', help='Enables cross validation')
+    parser.add_argument('--img_cache', type=str, default=None, help='Path to images')
+    parser.add_argument('--train_subfolder', type=str, default='full', help='Which train feather files are used')
     # parser.add_argument('--n_folds', type=int, default=5, help='Number of folds for cross-validation')
 
     opt = parser.parse_args()
@@ -57,7 +59,7 @@ def main():
         config = yaml.safe_load(ymlfile)
 
     # load the train dataframe, and associate samples to folds
-    train_df = utils.create_train_pd(opt.data_dir, downsampled=False)
+    train_df = utils.create_train_pd(opt.data_dir, subfolder=opt.train_subfolder)
 
     if opt.cross_validation:
         num_folds = config['dataset']['n-folds']
@@ -97,8 +99,8 @@ def train(opt, config, data_df, fold=0):
     tokenizer = AutoTokenizer.from_pretrained(config['text-model']['model-name'])
 
     x_train, x_valid = data_df.query(f"Fold != {fold}"), data_df.query(f"Fold == {fold}")
-    train_dataset = WikipediaDataset(x_train, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None, include_images=not config['image-model']['disabled'])
-    val_dataset = WikipediaDataset(x_valid, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=None, include_images=not config['image-model']['disabled'])
+    train_dataset = WikipediaDataset(x_train, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=opt.img_cache, include_images=not config['image-model']['disabled'])
+    val_dataset = WikipediaDataset(x_valid, tokenizer, max_length=80, split='trainval', transforms=clip_transform, training_img_cache=opt.img_cache, include_images=not config['image-model']['disabled'])
 
     train_dataloader = DataLoader(train_dataset, batch_size=config['training']['bs'], shuffle=True, num_workers=opt.workers, collate_fn=collate_fn_without_nones)
     val_dataloader = DataLoader(val_dataset, batch_size=config['training']['bs'], shuffle=False, num_workers=opt.workers, collate_fn=collate_fn_without_nones)

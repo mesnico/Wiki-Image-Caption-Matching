@@ -21,9 +21,8 @@ def read_train_feather_files(feathers_file_root, drop_duplicates=False):
     train_df.head()
     return train_df
 
-def create_train_pd(data_root, downsampled=True):
-    intermediate_dir = 'downsampled' if downsampled else 'full'
-    train_dir = os.path.join(data_root, 'train', intermediate_dir)
+def create_train_pd(data_root, subfolder='full'):
+    train_dir = os.path.join(data_root, 'train', subfolder)
     train_pd = read_train_feather_files(train_dir)
     return train_pd
 
