@@ -1,0 +1,29 @@
+dataset:
+  n-folds: 5000
+  val-samples: 10000
+
+text-model:
+  model-name: "xlm-roberta-base"
+  dim: 768
+  finetune: False
+
+image-model:
+  disabled: true
+  model-name: "ViT-B/32"
+  dim: 512
+  finetune: False
+
+matching:
+  common-space-dim: 1024
+  text-transformer-layers: 2
+
+training:
+  bs: 64
+  lr: 0.00001
+  margin: 0.2
+  max-violation: True
+
+  # lr scheduler
+  scheduler: 'steplr'
+  milestones: [30]
+  gamma: 0.1

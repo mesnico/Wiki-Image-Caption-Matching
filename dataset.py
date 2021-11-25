@@ -1,7 +1,5 @@
 import os
-import logging
-
-import random
+from urllib.parse import unquote
 from io import BytesIO
 
 from PIL import Image
@@ -104,9 +102,12 @@ class WikipediaDataset(Dataset):
         caption_ids = caption_inputs['input_ids']
         caption_mask = caption_inputs['attention_mask']
 
-        url = self.data.at[index, "page_url"]
+        url = self.data.at[index, "image_url"]
         url = url.rsplit('/', 1)
         url = url[0] if len(url)==1 else url[1]
+        url = unquote(url)
+        url = url.replace('_', ' ')
+        url = os.path.splitext(url)[0]
         url_inputs = self.tokenizer.encode_plus(
             url,
             truncation=True,
