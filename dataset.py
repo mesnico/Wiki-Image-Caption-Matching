@@ -81,10 +81,10 @@ class WikipediaDataset(Dataset):
             img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"], force_cache=True)
             if self.split != 'test':
                 # while img is None:  # TODO: better way to handle missing images?
-                logging.warning('Image {} not existing.'.format(self.data.at[index, "image_url"]))
                 #     index = random.randint(0, len(self.data) - 1)
                 #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
                 if img is None:
+                    logging.warning('Image {} not existing.'.format(self.data.at[index, "image_url"]))
                     return None
             else:
                 if img is None:

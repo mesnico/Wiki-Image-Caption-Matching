@@ -14,6 +14,7 @@ image-model:
   finetune: False
 
 matching:
+  aggregate-tokens-depth: null
   common-space-dim: 1024
   text-transformer-layers: 2
 

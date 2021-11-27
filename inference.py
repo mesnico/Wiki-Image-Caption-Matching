@@ -1,12 +1,13 @@
 import torch
 import argparse
 import logging
+logging.basicConfig(level = logging.INFO)
 
 from torch.utils.data import DataLoader
 import tqdm
 from transformers import AutoTokenizer
 import clip
-import numpy
+import csv
 import pandas as pd
 
 import evaluation
@@ -41,7 +42,7 @@ def main(opt):
     checkpoint = torch.load(opt.checkpoint, map_location='cpu')
     config = checkpoint['cfg']
     test_df = utils.create_test_pd(opt.data_dir)
-    # test_df = test_df[:1000]
+    # test_df = test_df[:1200]
 
     # Load datasets and create dataloaders
     _, clip_transform = clip.load(config['image-model']['model-name'])
@@ -64,19 +65,27 @@ def main(opt):
     model.eval()
 
     query_feats, caption_feats = evaluation.encode_data(model, test_dataloader)
-    result_indexes = exhaustive_knn_search(query_feats, caption_feats, topk=5, gpu=True)
+    result_indexes = exhaustive_knn_search(query_feats, caption_feats, topk=opt.k, gpu=True)
 
-    # convert ids to captions
-    pbar = tqdm.tqdm(result_indexes)
-    pbar.set_description('Assemble final table')
-    final_df = pd.DataFrame()
-    for i, topk_idxs in enumerate(pbar):
-        captions_df = test_df.iloc[topk_idxs]
-        captions_df['id'] = [i] * len(topk_idxs)
-        final_df = pd.concat([final_df, captions_df])
+    if opt.output_indexes:
+        logging.info('Saving indexes on {}'.format(opt.output_indexes))
+        with open(opt.output_indexes, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerows(result_indexes)
 
-    final_df = final_df[["id", "caption_title_and_reference_description"]]
-    final_df.to_csv(opt.out, index=False)
+    if opt.submission_file:
+        # convert ids to captions
+        pbar = tqdm.tqdm(result_indexes)
+        pbar.set_description('Assemble final table')
+        final_df = pd.DataFrame()
+        for i, topk_idxs in enumerate(pbar):
+            topk_idxs = topk_idxs[:5]   # only the top-5 results are evaluated
+            captions_df = test_df.iloc[topk_idxs]
+            captions_df['id'] = [i] * len(topk_idxs)
+            final_df = pd.concat([final_df, captions_df])
+
+        final_df = final_df[["id", "caption_title_and_reference_description"]]
+        final_df.to_csv(opt.submission_file, index=False)
     print('DONE')
 
 if __name__ == '__main__':
@@ -84,7 +93,9 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default=None, type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none). Loads only the model')
     parser.add_argument('--data_dir', default='data', help='Root dir for data')
-    parser.add_argument('--out', default='submission.csv')
+    parser.add_argument('--submission_file', default=None, help='File name for submission (.csv)')
+    parser.add_argument('--output_indexes', default=None, help='File name for index file (.csv)')
+    parser.add_argument('--k', type=int, default=1000, help='k for k-nn search')
     parser.add_argument('--workers', default=0, type=int,
                         help='Number of data loader workers.')
 
