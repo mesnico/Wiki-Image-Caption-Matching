@@ -180,7 +180,7 @@ def train(opt, config, data_df, fold=0):
             # forward the model
             optimizer.zero_grad()
 
-            loss = model(*data)
+            loss, alphas = model(*data)
             loss.backward()
 
             torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 2.0)
@@ -192,15 +192,19 @@ def train(opt, config, data_df, fold=0):
                 progress_bar.set_postfix(dict(loss='{:.2}'.format(mean_loss)))
                 mean_loss = 0
 
+            if alphas is not None:
+                tb_logger.add_scalars("Training/Alphas", alphas, global_iteration)
             tb_logger.add_scalar("Training/Epoch", epoch, global_iteration)
             tb_logger.add_scalar("Training/Loss", loss.item(), global_iteration)
             tb_logger.add_scalar("Training/Learning_Rate", optimizer.param_groups[0]['lr'], global_iteration)
 
             if global_iteration % opt.val_step == 0:
                 # validate
-                metrics = validate(val_dataloader, model)
+                metrics, alphas = validate(val_dataloader, model)
                 for m, v in metrics.items():
                     tb_logger.add_scalar("Validation/{}".format(m), v, global_iteration)
+                if alphas is not None:
+                    tb_logger.add_scalars("Validation/Alphas", alphas, global_iteration)
                 # progress_bar.set_postfix(dict(r1='{:.2}'.format(metrics['r1']), r5='{:.2}'.format(metrics['r5']), meanr='{:.2}'.format(metrics['meanr'])))
                 print(metrics)
 
@@ -223,11 +227,11 @@ def train(opt, config, data_df, fold=0):
 def validate(val_dataloader, model):
     model.eval()
 
-    query_feats, caption_feats = evaluation.encode_data(model, val_dataloader)
+    query_feats, caption_feats, alphas = evaluation.encode_data(model, val_dataloader)
     metrics = evaluation.compute_recall(query_feats, caption_feats)
 
     model.train()
-    return metrics
+    return metrics, alphas
 
 if __name__ == '__main__':
     main()

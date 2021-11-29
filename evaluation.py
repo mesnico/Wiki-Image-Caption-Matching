@@ -27,7 +27,7 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
 
         # compute the embeddings
         with torch.no_grad():
-            img_emb, cap_emb = model.compute_embeddings(*data)
+            img_emb, cap_emb, _ = model.compute_embeddings(*data)
 
             # initialize the numpy arrays given the size of the embeddings
             if img_embs is None:

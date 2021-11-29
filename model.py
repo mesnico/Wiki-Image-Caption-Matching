@@ -58,9 +58,9 @@ class ImageExtractorModel(nn.Module):
 
 
 class DepthAggregatorModel(nn.Module):
-    def __init__(self, config, input_dim=1024, output_dim=1024):
+    def __init__(self, aggr, input_dim=1024, output_dim=1024):
         super().__init__()
-        self.aggr = config['matching']['aggregate-tokens-depth']
+        self.aggr = aggr
         if self.aggr == 'gated':
             self.self_attn = nn.MultiheadAttention(input_dim, num_heads=4, dropout=0.1)
             self.gate_ffn = nn.Linear(input_dim, 1)
@@ -120,6 +120,38 @@ class DepthAggregatorModel(nn.Module):
         return out
 
 
+class FeatureFusionModel(nn.Module):
+    def __init__(self, mode, img_feat_dim, txt_feat_dim, common_space_dim):
+        super().__init__()
+        self.mode = mode
+        if mode == 'concat':
+            pass #TODO
+        elif mode == 'weighted':
+            self.alphas = nn.Sequential(
+                nn.Linear(img_feat_dim + txt_feat_dim, 512),
+                nn.ReLU(),
+                nn.Dropout(p=0.1),
+                nn.Linear(512, 2))
+            self.img_proj = nn.Linear(img_feat_dim, common_space_dim)
+            self.txt_proj = nn.Linear(txt_feat_dim, common_space_dim)
+            self.post_process = nn.Sequential(
+                nn.Linear(common_space_dim, common_space_dim),
+                nn.ReLU(),
+                nn.Dropout(p=0.1),
+                nn.Linear(common_space_dim, common_space_dim)
+            )
+
+    def forward(self, img_feat, txt_feat):
+        # TODO: add other fusion approaches
+        concat_feat = torch.cat([img_feat, txt_feat], dim=1)
+        alphas = torch.sigmoid(self.alphas(concat_feat))    # B x 2
+        img_feat_norm = F.normalize(self.img_proj(img_feat), p=2, dim=1)
+        txt_feat_norm = F.normalize(self.txt_proj(txt_feat), p=2, dim=1)
+        out_feat = img_feat_norm * alphas[:, 0].unsqueeze(1) + txt_feat_norm * alphas[:, 1].unsqueeze(1)
+        out_feat = self.post_process(out_feat)
+        return out_feat, alphas
+
+
 class MatchingModel(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -128,7 +160,8 @@ class MatchingModel(nn.Module):
         img_feat_dim = config['image-model']['dim']
         txt_feat_dim = config['text-model']['dim']
         image_disabled = config['image-model']['disabled']
-        self.aggregate_tokens_depth = config['matching']['aggregate-tokens-depth']
+        self.aggregate_tokens_depth = config['matching']['aggregate-tokens-depth'] if 'aggregate-tokens-depth' in config['matching'] else None
+        self.fusion_mode = config['matching']['fusion-mode'] if 'fusion-mode' in config['matching'] else 'concat'
         self.image_disabled = image_disabled
         # self.url_fc = nn.Sequential(
         #     nn.Linear(txt_feat_dim, txt_feat_dim),
@@ -157,22 +190,24 @@ class MatchingModel(nn.Module):
                 nn.Linear(img_feat_dim, img_feat_dim)
                 # nn.BatchNorm1d(img_feat_dim)
             )
-            self.process_after_concat = nn.Sequential(
+            self.process_after_concat = nn.Sequential(      #TODO: for model loading backward compatibility. Move this into FeatureFusionModel
                 nn.Linear(img_feat_dim + txt_feat_dim, common_space_dim),
                 nn.ReLU(),
                 nn.Dropout(p=0.1),
                 nn.Linear(common_space_dim, common_space_dim)
-            )
+            ) if self.fusion_mode == 'concat' else FeatureFusionModel(self.fusion_mode, img_feat_dim, txt_feat_dim, common_space_dim)
 
         self.caption_process = TransformerPooling(input_dim=txt_feat_dim, output_dim=common_space_dim, num_layers=num_text_transformer_layers)
         self.url_process = TransformerPooling(input_dim=txt_feat_dim, output_dim=txt_feat_dim if not image_disabled else common_space_dim, num_layers=num_text_transformer_layers)
-        self.token_aggregator = DepthAggregatorModel(config, input_dim=txt_feat_dim, output_dim=common_space_dim)
+        if self.aggregate_tokens_depth is not None:
+            self.token_aggregator = DepthAggregatorModel(self.aggregate_tokens_depth, input_dim=txt_feat_dim, output_dim=common_space_dim)
 
         contrastive_margin = config['training']['margin']
         max_violation = config['training']['max-violation']
         self.matching_loss = ContrastiveLoss(margin=contrastive_margin, max_violation=max_violation)
 
     def compute_embeddings(self, img, url, url_mask, caption, caption_mask):
+        alphas = None
         if torch.cuda.is_available():
             img = img.cuda() if img is not None else None
             url = url.cuda()
@@ -182,21 +217,30 @@ class MatchingModel(nn.Module):
 
         url_feats = self.txt_model(url, url_mask)
         url_feats_plus = self.url_process(url_feats[-1], url_mask)   # process features from the last layer
-        url_feats_depth_aggregated = self.token_aggregator(url_feats, url_mask)
-        url_feats = url_feats_plus + url_feats_depth_aggregated     # merge together features processed from the last layer and features from the hidden layers of Roberta
+        if self.aggregate_tokens_depth:
+            url_feats_depth_aggregated = self.token_aggregator(url_feats, url_mask)
+            url_feats = url_feats_plus + url_feats_depth_aggregated     # merge together features processed from the last layer and features from the hidden layers of Roberta
+        else:
+            url_feats = url_feats_plus
 
         caption_feats = self.txt_model(caption, caption_mask)
         caption_feats_plus = self.caption_process(caption_feats[-1], caption_mask)
-        caption_feats_depth_aggregated = self.token_aggregator(caption_feats, caption_mask)
-        caption_feats = caption_feats_plus + caption_feats_depth_aggregated # same as for urls
+        if self.aggregate_tokens_depth:
+            caption_feats_depth_aggregated = self.token_aggregator(caption_feats, caption_mask)
+            caption_feats = caption_feats_plus + caption_feats_depth_aggregated # same as for urls
+        else:
+            caption_feats = caption_feats_plus
 
         if not self.image_disabled:
             # forward img model
             img_feats = self.img_model(img).float()
             img_feats = self.image_fc(img_feats)
             # concatenate img and url features
-            query_feats = torch.cat([img_feats, url_feats], dim=1)
-            query_feats = self.process_after_concat(query_feats)
+            if self.fusion_mode == 'concat':
+                query_feats = torch.cat([img_feats, url_feats], dim=1)
+                query_feats = self.process_after_concat(query_feats)
+            else:
+                query_feats, alphas = self.process_after_concat(img_feats, url_feats)   # TODO: very bad design for maintaining retro-compatibility
         else:
             query_feats = url_feats
 
@@ -204,7 +248,11 @@ class MatchingModel(nn.Module):
         query_feats = F.normalize(query_feats, p=2, dim=1)
         caption_feats = F.normalize(caption_feats, p=2, dim=1)
 
-        return query_feats, caption_feats
+        if alphas is not None:
+            alphas = alphas.mean(dim=0)
+            alphas = {'img_alpha': alphas[0].item(), 'txt_alpha': alphas[1].item()}
+
+        return query_feats, caption_feats, alphas
 
     def compute_loss(self, query_feats, caption_feats):
         loss = self.matching_loss(query_feats, caption_feats)
@@ -212,10 +260,10 @@ class MatchingModel(nn.Module):
 
     def forward(self, img, url, url_mask, caption, caption_mask):
         # forward the embeddings
-        query_feats, caption_feats = self.compute_embeddings(img, url, url_mask, caption, caption_mask)
+        query_feats, caption_feats, alphas = self.compute_embeddings(img, url, url_mask, caption, caption_mask)
 
         # compute loss
         loss = self.compute_loss(query_feats, caption_feats)
-        return loss
+        return loss, alphas
 
 

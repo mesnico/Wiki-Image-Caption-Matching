@@ -60,7 +60,7 @@ def main(opt):
         model.cuda()
     logging.info('Model initialized')
 
-    model.load_state_dict(checkpoint['model'])
+    model.load_state_dict(checkpoint['model'], strict=True)
     logging.info('Checkpoint loaded')
     model.eval()
 
@@ -77,13 +77,14 @@ def main(opt):
         # convert ids to captions
         pbar = tqdm.tqdm(result_indexes)
         pbar.set_description('Assemble final table')
-        final_df = pd.DataFrame()
+        final_dframes = [] # pd.DataFrame()
         for i, topk_idxs in enumerate(pbar):
             topk_idxs = topk_idxs[:5]   # only the top-5 results are evaluated
             captions_df = test_df.iloc[topk_idxs]
             captions_df['id'] = [i] * len(topk_idxs)
-            final_df = pd.concat([final_df, captions_df])
+            final_dframes.append(captions_df) # = pd.concat([final_df, captions_df])
 
+        final_df = pd.concat(final_dframes)
         final_df = final_df[["id", "caption_title_and_reference_description"]]
         final_df.to_csv(opt.submission_file, index=False)
     print('DONE')
