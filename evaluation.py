@@ -16,10 +16,11 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
     # numpy array to keep all the embeddings
     img_embs = None
     cap_embs = None
+    alphas_list = []
 
     # ids_pointer = 0
     pbar = tqdm.tqdm(data_loader)
-    pbar.set_description('Encoding validation data')
+    pbar.set_description('Encoding inference data')
     for i, data in enumerate(pbar):
         # bs = len(data[0])
         # ids = list(range(ids_pointer, ids_pointer + bs))
@@ -27,7 +28,7 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
 
         # compute the embeddings
         with torch.no_grad():
-            img_emb, cap_emb, _ = model.compute_embeddings(*data)
+            img_emb, cap_emb, alphas = model.compute_embeddings(*data)
 
             # initialize the numpy arrays given the size of the embeddings
             if img_embs is None:
@@ -36,6 +37,9 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
             else:
                 img_embs = torch.cat([img_embs, img_emb.cpu()], dim=0)
                 cap_embs = torch.cat([cap_embs, cap_emb.cpu()], dim=0)
+
+            if alphas is not None:
+                alphas_list.append(alphas)
 
             # preserve the embeddings by copying from gpu and converting to numpy
             # img_embs[ids, :] = img_emb.cpu()
@@ -49,7 +53,14 @@ def encode_data(model, data_loader, log_step=100000000, logging=print):
                     .format(
                         i, len(data_loader)))
 
-    return img_embs, cap_embs
+    if len(alphas_list) > 0:
+        alphas = torch.cat(alphas_list, dim=0)
+        alphas = alphas.mean(dim=0)
+        alphas = {'img_alpha': alphas[0].item(), 'txt_alpha': alphas[1].item()}
+    else:
+        alphas = None
+
+    return img_embs, cap_embs, alphas
 
 
 def compute_recall(queries, captions):

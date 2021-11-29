@@ -248,10 +248,6 @@ class MatchingModel(nn.Module):
         query_feats = F.normalize(query_feats, p=2, dim=1)
         caption_feats = F.normalize(caption_feats, p=2, dim=1)
 
-        if alphas is not None:
-            alphas = alphas.mean(dim=0)
-            alphas = {'img_alpha': alphas[0].item(), 'txt_alpha': alphas[1].item()}
-
         return query_feats, caption_feats, alphas
 
     def compute_loss(self, query_feats, caption_feats):

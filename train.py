@@ -193,6 +193,8 @@ def train(opt, config, data_df, fold=0):
                 mean_loss = 0
 
             if alphas is not None:
+                alphas = alphas.mean(dim=0)
+                alphas = {'img_alpha': alphas[0].item(), 'txt_alpha': alphas[1].item()}
                 tb_logger.add_scalars("Training/Alphas", alphas, global_iteration)
             tb_logger.add_scalar("Training/Epoch", epoch, global_iteration)
             tb_logger.add_scalar("Training/Loss", loss.item(), global_iteration)
