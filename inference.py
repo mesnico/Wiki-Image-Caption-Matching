@@ -78,10 +78,10 @@ def main(opt):
             b = i * chunks_size
             e = (i + 1) * chunks_size
             fname = os.path.join(opt.output_indexes, 'indexes_{}_{}'.format(b, e) + '.csv')
-            result_indexes = [o[b:e] for o in result_indexes]
+            result_indexes_cut = [o[b:e] for o in result_indexes]
             with open(fname, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerows(result_indexes)
+                writer.writerows(result_indexes_cut)
 
     if opt.submission_file:
         # convert ids to captions
