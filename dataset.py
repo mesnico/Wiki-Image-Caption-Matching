@@ -19,7 +19,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data._utils.collate import default_collate
 
-def url_to_image(cache_path, img_url, force_cache=False):   # TODO here, get hash of url and store the file in the cache_path
+def url_to_image(cache_path, img_url, force_cache=False, cache_write_if_not_exists=False):   # TODO here, get hash of url and store the file in the cache_path
     if cache_path is not None:
         file_name = uuid.uuid5(uuid.NAMESPACE_URL, img_url)
         file_name = os.path.join(cache_path, '{}.jpg'.format(file_name))
@@ -27,9 +27,12 @@ def url_to_image(cache_path, img_url, force_cache=False):   # TODO here, get has
             try:
                 img = Image.open(file_name).convert("RGB")
                 return img
-            except:
+            except Exception as e:
+                logging.warning(str(e) + '; trying to download the image' if not force_cache else '')
                 img = None
         else:
+            if not force_cache:
+                logging.warning('Image {} not found on disk, trying to download it'.format(img_url))
             img = None
 
         if force_cache:
@@ -40,7 +43,7 @@ def url_to_image(cache_path, img_url, force_cache=False):   # TODO here, get has
         req = request.Request(img_url)
         req.add_header('User-Agent', 'abc-bot')
         response = request.urlopen(req)
-        if cache_path is not None:
+        if cache_path is not None and cache_write_if_not_exists:
             # save on disk, on the cache path
             with open(file_name, 'wb') as f:
                 f.write(response.read())
@@ -49,8 +52,11 @@ def url_to_image(cache_path, img_url, force_cache=False):   # TODO here, get has
             # do not save on disk
             img = Image.open(BytesIO(response.read()))
         # os.remove(file_name)
+        if img is None:
+            logging.warning('Trying downloading {}. Returned null stream'.format(img_url))
         return img
-    except:
+    except Exception as e:
+        logging.warning(str(e))
         return None
 
 
@@ -78,7 +84,7 @@ class WikipediaDataset(Dataset):
             index = index.tolist()
 
         if self.include_images:
-            img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"], force_cache=True)
+            img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"], force_cache=False)
             if self.split != 'test':
                 # while img is None:  # TODO: better way to handle missing images?
                 #     index = random.randint(0, len(self.data) - 1)
