@@ -9,6 +9,7 @@ from transformers import AutoTokenizer
 import clip
 import csv
 import pandas as pd
+import os
 
 import evaluation
 import utils
@@ -49,7 +50,7 @@ def main(opt):
     tokenizer = AutoTokenizer.from_pretrained(config['text-model']['model-name'])
 
     test_dataset = WikipediaDataset(test_df, tokenizer, max_length=80, split='test', transforms=clip_transform,
-                                     training_img_cache=None, include_images=not config['image-model']['disabled'])
+                                     training_img_cache=opt.img_cache, include_images=not config['image-model']['disabled'])
 
     test_dataloader = DataLoader(test_dataset, batch_size=config['training']['bs'], shuffle=False,
                                 num_workers=opt.workers, collate_fn=collate_fn_without_nones)
@@ -64,14 +65,23 @@ def main(opt):
     logging.info('Checkpoint loaded')
     model.eval()
 
-    query_feats, caption_feats = evaluation.encode_data(model, test_dataloader)
+    query_feats, caption_feats, _ = evaluation.encode_data(model, test_dataloader)
     result_indexes = exhaustive_knn_search(query_feats, caption_feats, topk=opt.k, gpu=True)
 
     if opt.output_indexes:
-        logging.info('Saving indexes on {}'.format(opt.output_indexes))
-        with open(opt.output_indexes, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerows(result_indexes)
+        logging.info('Saving indexes in {}'.format(opt.output_indexes))
+        if not os.path.exists(opt.output_indexes):
+            os.makedirs(opt.output_indexes)
+        chunks_size = 1000
+        num_chunks = opt.k // chunks_size
+        for i in tqdm.trange(num_chunks):
+            b = i * chunks_size
+            e = (i + 1) * chunks_size
+            fname = os.path.join(opt.output_indexes, 'indexes_{}_{}'.format(b, e) + '.csv')
+            result_indexes = [o[b:e] for o in result_indexes]
+            with open(fname, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerows(result_indexes)
 
     if opt.submission_file:
         # convert ids to captions
@@ -95,10 +105,11 @@ if __name__ == '__main__':
                         help='path to latest checkpoint (default: none). Loads only the model')
     parser.add_argument('--data_dir', default='data', help='Root dir for data')
     parser.add_argument('--submission_file', default=None, help='File name for submission (.csv)')
-    parser.add_argument('--output_indexes', default=None, help='File name for index file (.csv)')
+    parser.add_argument('--output_indexes', default=None, help='Path to folder where indexes csv files are stored')
     parser.add_argument('--k', type=int, default=1000, help='k for k-nn search')
     parser.add_argument('--workers', default=0, type=int,
                         help='Number of data loader workers.')
+    parser.add_argument('--img_cache', type=str, default=None, help='Path to images')
 
     opt = parser.parse_args()
     print(opt)
