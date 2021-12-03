@@ -131,7 +131,7 @@ def compute_la_stats(opt):
     assert os.path.exists(SCORES_CACHE)
     logging.info('Computing stats on linear assignment for different values of top_scores')
     rows = []
-    top_k_scores = [300, 350] # list(range(300, 1000, 50))
+    top_k_scores = list(range(300, 1000, 50))
     for t in tqdm.tqdm(top_k_scores):
         result_indexes = linear_assignment_search(opt.k, top_scores=t)
         metrics = compute_recall(result_indexes, topk=opt.k)
