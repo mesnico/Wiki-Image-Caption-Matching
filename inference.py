@@ -37,7 +37,7 @@ def exhaustive_knn_search(query_feats, caption_feats, topk=5, batch_size=5, gpu=
     npts = query_feats.shape[0]
     if cache_scores and not os.path.exists(SCORES_CACHE):
         logging.info('Caching scores into {}'.format(SCORES_CACHE))
-        cached_scores = sp.csr_matrix((npts, npts), dtype='float32')
+        cached_scores = sp.lil_matrix((npts, npts), dtype='float32')
         cached_indexes = np.empty((npts, top_scores))
 
     num_batches = (npts // batch_size) + 1 if npts % batch_size != 0 else (npts // batch_size)
@@ -69,7 +69,7 @@ def exhaustive_knn_search(query_feats, caption_feats, topk=5, batch_size=5, gpu=
                 cached_indexes[internal_idx, :] = r
 
     if cache_scores:
-        sp.save_npz(SCORES_CACHE, cached_scores)
+        sp.save_npz(SCORES_CACHE, cached_scores.tocsr())
         np.save(IDXS_CACHE, cached_indexes)
     return results
 
