@@ -19,11 +19,19 @@ import utils
 from dataset import WikipediaDataset, collate_fn_without_nones
 from model import MatchingModel
 
-SCORES_CACHE = 'cached_scores.npz'  # sparse
-IDXS_CACHE = 'cached_indexes.npy'  # dense
+# SCORES_CACHE = 'cached_scores.npz'  # sparse
+# IDXS_CACHE = 'cached_indexes.npy'  # dense
 
-def knn_search_from_cached_scores(npts, topk=5):
-    indexes = np.load(IDXS_CACHE)
+
+def get_cached_files(set):
+    cache_dir = 'cached_scores' if opt.scores_dir is None else opt.scores_dir  # TODO: opt is accessed as a global variable :(
+    scores_file = 'cached_scores_{}.npz'.format(set)
+    indexes_file = 'cached_indexes_{}.npy'.format(set)
+    return os.path.join(cache_dir, scores_file), os.path.join(cache_dir, indexes_file)	# scores, indexes 
+
+
+def knn_search_from_cached_scores(npts, set, topk=5):
+    indexes = np.load(get_cached_files(set)[1])
     indexes = indexes[:, :topk]
     return indexes.tolist()
 
@@ -33,10 +41,11 @@ def knn_search_from_cached_scores(npts, topk=5):
     # return lol
 
 
-def exhaustive_knn_search(query_feats, caption_feats, topk=5, batch_size=5, gpu=False, cache_scores=False, top_scores=1000):
+def exhaustive_knn_search(query_feats, caption_feats, set, topk=5, batch_size=5, gpu=False, cache_scores=False, top_scores=1000):
+    score_file, index_file = get_cached_files(set)
     npts = query_feats.shape[0]
-    if cache_scores and not os.path.exists(SCORES_CACHE):
-        logging.info('Caching scores into {}'.format(SCORES_CACHE))
+    if cache_scores and not os.path.exists(score_file):
+        logging.info('Caching scores into {}'.format(score_file))
         cached_scores = sp.lil_matrix((npts, npts), dtype='float32')
         cached_indexes = np.empty((npts, top_scores))
 
@@ -69,18 +78,25 @@ def exhaustive_knn_search(query_feats, caption_feats, topk=5, batch_size=5, gpu=
                 cached_indexes[internal_idx, :] = r
 
     if cache_scores:
-        sp.save_npz(SCORES_CACHE, cached_scores.tocsr())
-        np.save(IDXS_CACHE, cached_indexes)
+        sp.save_npz(score_file, cached_scores.tocsr())
+        np.save(index_file, cached_indexes)
     return results
 
 
-def linear_assignment_search(topk=5, top_scores=1000):
-    scores = sp.load_npz(SCORES_CACHE)
-    indexes = np.load(IDXS_CACHE).astype(int)
+def linear_assignment_search(set, topk=5, top_scores=1000):
+    limit = 0 # now it is disabled # TODO: this limit is empirically found for making a complete graph matching
+
+    score_file, index_file = get_cached_files(set)
+    scores = sp.load_npz(score_file)
+    indexes = np.load(index_file).astype(int)
     npts = indexes.shape[0]
     if top_scores < indexes.shape[1]:
         dense_scores = scores.todense()
-        np.put_along_axis(dense_scores, indexes[:, top_scores:], 0, axis=1)
+        if top_scores < limit:
+            np.put_along_axis(dense_scores, indexes[:, top_scores:limit], -1, axis=1)	# make assignment impossible (-1) but not zero, otherwise too much sparsity makes assignment impossible
+            np.put_along_axis(dense_scores, indexes[:, limit:], 0, axis=1)
+        else:
+            np.put_along_axis(dense_scores, indexes[:, top_scores:], 0, axis=1)
         # dense_scores[indexes[:, top_scores:]] = 0
         #dense_scores = np.take(dense_scores, indexes[:, top_scores:], axis=1)
         scores = sp.csr_matrix(dense_scores)
@@ -128,15 +144,17 @@ def compute_recall(items, topk):
 
 
 def compute_la_stats(opt):
-    assert os.path.exists(SCORES_CACHE)
+    score_file, index_file = get_cached_files(set)
+    assert os.path.exists(score_file)
     logging.info('Computing stats on linear assignment for different values of top_scores')
     rows = []
     top_k_scores = list(range(300, 1000, 50))
     for t in tqdm.tqdm(top_k_scores):
-        result_indexes = linear_assignment_search(opt.k, top_scores=t)
+        result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=t)
         metrics = compute_recall(result_indexes, topk=opt.k)
         row = {'top_scores': t, 'r1': metrics['r1'], 'r5': metrics['r5']}
         rows.append(row)
+        print(row)
     with open(opt.compute_la_stats, 'w') as f:
         json.dump(rows, f)
 
@@ -144,6 +162,7 @@ def compute_la_stats(opt):
 def main(opt):
     checkpoint = torch.load(opt.checkpoint, map_location='cpu')
     config = checkpoint['cfg']
+    score_file, _ = get_cached_files(opt.set)
 
     if opt.set == 'val':
         logging.info('Validating! Using subfolder {}'.format(opt.train_subfolder))
@@ -153,13 +172,15 @@ def main(opt):
         n_samples = 92366
 
     if opt.linear_assignment:
-        assert opt.enable_cached_scores and os.path.exists(SCORES_CACHE)
+        assert opt.enable_cached_scores and os.path.exists(score_file)
         logging.info('Using cached scores. Linear assignment search')
-        result_indexes = linear_assignment_search(opt.k, top_scores=700)
+        result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=1000)
+        df = None
     else:
-        if opt.enable_cached_scores and os.path.exists(SCORES_CACHE):
+        if opt.enable_cached_scores and os.path.exists(score_file):
             logging.info('Using cached scores. Standard search')
-            result_indexes = knn_search_from_cached_scores(n_samples, opt.k)
+            result_indexes = knn_search_from_cached_scores(n_samples, opt.set, opt.k)
+            df = None
         else:
             if opt.set == 'test':
                 df = utils.create_test_pd(opt.data_dir)
@@ -195,7 +216,7 @@ def main(opt):
             model.eval()
 
             query_feats, caption_feats, _ = evaluation.encode_data(model, test_dataloader)
-            result_indexes = exhaustive_knn_search(query_feats, caption_feats, topk=opt.k, gpu=True, cache_scores=opt.enable_cached_scores)
+            result_indexes = exhaustive_knn_search(query_feats, caption_feats, opt.set, topk=opt.k, gpu=True, cache_scores=opt.enable_cached_scores)
 
     if opt.set == 'test':
         # if in test mode, output files for the submission
@@ -215,6 +236,8 @@ def main(opt):
                     writer.writerows(result_indexes_cut)
 
         if opt.submission_file:
+            if df is None:
+                df = utils.create_test_pd(opt.data_dir)
             # convert ids to captions
             pbar = tqdm.tqdm(result_indexes)
             pbar.set_description('Assemble final table')
@@ -251,6 +274,7 @@ if __name__ == '__main__':
     parser.add_argument('--disable_cached_scores', action='store_true', help='Disables loading of the cached scores')
     parser.add_argument('--train_subfolder', type=str, default='full', help='Which train feather files are used (for constructing the validation set')
     parser.add_argument('--bs', type=int, default=64)
+    parser.add_argument('--scores_dir', type=str, default='cached_scores', help='Directory where score cache files are placed')
 
     opt = parser.parse_args()
     opt.enable_cached_scores = not opt.disable_cached_scores
