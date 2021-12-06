@@ -159,6 +159,17 @@ def compute_la_stats(opt):
         json.dump(rows, f)
 
 
+def create_val_df(config, opt):
+    df = utils.create_train_pd(opt.data_dir, subfolder=opt.train_subfolder)
+    df = df.sample(frac=1, random_state=42)
+    all_idxs = np.arange(len(df))
+    val_samples = config['dataset']['val-samples']
+    logging.info('Using {} samples for validating'.format(val_samples))
+    valid_idx = all_idxs[:val_samples]
+    df = df.loc[valid_idx]
+    return df
+
+
 def main(opt):
     checkpoint = torch.load(opt.checkpoint, map_location='cpu')
     config = checkpoint['cfg']
@@ -185,13 +196,7 @@ def main(opt):
             if opt.set == 'test':
                 df = utils.create_test_pd(opt.data_dir)
             elif opt.set == 'val':
-                df = utils.create_train_pd(opt.data_dir, subfolder=opt.train_subfolder)
-                df = df.sample(frac=1, random_state=42)
-                all_idxs = np.arange(len(df))
-                val_samples = config['dataset']['val-samples']
-                logging.info('Using {} samples for validating'.format(val_samples))
-                valid_idx = all_idxs[:val_samples]
-                df = df.loc[valid_idx]
+                df = create_val_df(config, opt)
             # test_df = test_df[:1200]
 
             # Load datasets and create dataloaders
@@ -251,7 +256,23 @@ def main(opt):
             final_df = pd.concat(final_dframes)
             final_df = final_df[["id", "caption_title_and_reference_description"]]
             final_df.to_csv(opt.submission_file, index=False)
+
     else:
+        if opt.print_example_results:
+            if df is None:
+                df = create_val_df(config, opt)
+            for i, query_res in enumerate(result_indexes[:200]):
+                gt_row = df.iloc[i]
+                print('[{}]: Query: {}'.format(i, gt_row["image_url"]))
+                print('[{}]: GT: {}'.format(i, gt_row["caption_title_and_reference_description"]))
+                print(' - Found:')
+                for res in query_res[:10]:
+                    res = int(res)
+                    retrieved_item = df.iloc[res]
+                    print('- - [{}]: {} - {}'.format(res, retrieved_item["image_url"], retrieved_item["caption_title_and_reference_description"]))
+
+                print('------')
+
         # validate on the val set
         metrics = compute_recall(result_indexes, topk=opt.k)
         print(metrics)
@@ -275,6 +296,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_subfolder', type=str, default='full', help='Which train feather files are used (for constructing the validation set')
     parser.add_argument('--bs', type=int, default=64)
     parser.add_argument('--scores_dir', type=str, default='cached_scores', help='Directory where score cache files are placed')
+    parser.add_argument('--print_example_results', action='store_true', help='Print example results. Only works when set=val')
 
     opt = parser.parse_args()
     opt.enable_cached_scores = not opt.disable_cached_scores
