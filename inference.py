@@ -266,7 +266,7 @@ def main(opt):
                 print('[{}]: Query: {}'.format(i, gt_row["image_url"]))
                 print('[{}]: GT: {}'.format(i, gt_row["caption_title_and_reference_description"]))
                 print(' - Found:')
-                for res in query_res[:10]:
+                for res in query_res:
                     res = int(res)
                     retrieved_item = df.iloc[res]
                     print('- - [{}]: {} - {}'.format(res, retrieved_item["image_url"], retrieved_item["caption_title_and_reference_description"]))
