@@ -83,13 +83,24 @@ def exhaustive_knn_search(query_feats, caption_feats, set, topk=5, batch_size=5,
     return results
 
 
-def linear_assignment_search(set, topk=5, top_scores=1000):
+def linear_assignment_search(set, topk=5, top_scores=1000, use_rank=False, score_override=None, index_override=None):
     limit = 0 # now it is disabled # TODO: this limit is empirically found for making a complete graph matching
-
-    score_file, index_file = get_cached_files(set)
-    scores = sp.load_npz(score_file)
-    indexes = np.load(index_file).astype(int)
+    if score_override is not None:
+        scores = score_override
+        indexes = index_override
+    else:
+        score_file, index_file = get_cached_files(set)
+        indexes = np.load(index_file).astype(int)
     npts = indexes.shape[0]
+    if score_override is None:
+        if not use_rank:
+            scores = sp.load_npz(score_file)
+        else:
+            scores = sp.lil_matrix((npts, scores.shape[1]), dtype='float32')
+            for i, ind in enumerate(indexes):
+                scores[i, ind] = np.log(1001) - np.log(np.arange(1, 1001))
+            scores = scores.tocsr()
+
     if top_scores < indexes.shape[1]:
         dense_scores = scores.todense()
         if top_scores < limit:
@@ -105,7 +116,7 @@ def linear_assignment_search(set, topk=5, top_scores=1000):
     # scores = np.load(SCORES_CACHE)
     for i in tqdm.trange(topk):
         row_ind, col_ind = sp.csgraph.min_weight_full_bipartite_matching(scores, maximize=True)
-        scores[row_ind, col_ind] = 0
+        scores[row_ind, col_ind] = 0 #scores[row_ind, col_ind] - 100
         result[row_ind, i] = col_ind
     result = result.tolist()
     return result
@@ -143,8 +154,40 @@ def compute_recall(items, topk):
     return {'r1':r1, 'r5': r5, 'r10':r10}
 
 
+import pdb
+def compute_indexes_stats(opt):
+    score_file, index_file = get_cached_files(opt.set)
+    index = np.load(index_file)
+    flattened = index[:, :5].flatten()
+    unique, counts = np.unique(flattened, return_counts=True)
+    # print(np.asarray((unique, counts)).T)
+    # max = np.max(counts)
+    # max_index = np.argmax(counts)
+    # print('Max = {}, at index {}'.format(max, max_index))
+    sort_idxs = np.argsort(-counts)
+    sorted_counts = counts[sort_idxs]
+    sorted_unique = unique[sort_idxs]
+    p = np.asarray((sorted_unique, sorted_counts)).T
+    print(p[:10 * 5])
+    queries = []
+    for i, idx in enumerate(sorted_unique[:10 * 5]):
+       query = np.where(flattened == idx)[0]
+       query = query // 5
+       queries.extend(query.tolist())
+
+    queries = np.unique(np.array(queries))
+
+    print('Num queries: {}'.format(len(queries)))
+    #print('Num elements: {}'.format(len(queries) * 5))
+    chosen_ids = sorted_unique[:len(queries)] #index[queries, :5]
+    print('Num elems: {}'.format(len(chosen_ids)))
+    # pdb.set_trace()
+    # print(p[:20, :])
+    return queries, chosen_ids  # row_ind, col_ind
+
+
 def compute_la_stats(opt):
-    score_file, index_file = get_cached_files(set)
+    score_file, index_file = get_cached_files(opt.set)
     assert os.path.exists(score_file)
     logging.info('Computing stats on linear assignment for different values of top_scores')
     rows = []
@@ -173,7 +216,7 @@ def create_val_df(config, opt):
 def main(opt):
     checkpoint = torch.load(opt.checkpoint, map_location='cpu')
     config = checkpoint['cfg']
-    score_file, _ = get_cached_files(opt.set)
+    score_file, index_file = get_cached_files(opt.set)
 
     if opt.set == 'val':
         logging.info('Validating! Using subfolder {}'.format(opt.train_subfolder))
@@ -182,15 +225,29 @@ def main(opt):
         logging.info('Testing!')
         n_samples = 92366
 
+    #compute_indexes_stats(opt)
+    #quit()
+
     if opt.linear_assignment:
         assert opt.enable_cached_scores and os.path.exists(score_file)
         logging.info('Using cached scores. Linear assignment search')
-        result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=1000)
+        result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=1000, use_rank=True)
         df = None
     else:
         if opt.enable_cached_scores and os.path.exists(score_file):
             logging.info('Using cached scores. Standard search')
             result_indexes = knn_search_from_cached_scores(n_samples, opt.set, opt.k)
+            la_row, la_col = compute_indexes_stats(opt)
+            scores = sp.load_npz(score_file)
+            indexes = np.load(index_file)
+            scores = scores[la_row, :]
+            indexes = indexes[la_row]
+            result_indexes_aug = linear_assignment_search(opt.set, opt.k, top_scores=1000, use_rank=False, index_override=indexes, score_override=scores)
+            # merge
+            assert len(result_indexes_aug) == len(la_row)
+            for r, ind in zip(result_indexes_aug, la_row):
+                r = [int(k) for k in r]
+                result_indexes[ind] = r
             df = None
         else:
             if opt.set == 'test':
