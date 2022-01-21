@@ -85,11 +85,11 @@ def exhaustive_knn_search(query_feats, caption_feats, set, topk=5, batch_size=5,
 
 def linear_assignment_search(set, topk=5, top_scores=1000, use_rank=False, score_override=None, index_override=None):
     limit = 0 # now it is disabled # TODO: this limit is empirically found for making a complete graph matching
+    score_file, index_file = get_cached_files(set)
     if score_override is not None:
         scores = score_override
         indexes = index_override
     else:
-        score_file, index_file = get_cached_files(set)
         indexes = np.load(index_file).astype(int)
     npts = indexes.shape[0]
     if score_override is None:
@@ -217,6 +217,7 @@ def main(opt):
     checkpoint = torch.load(opt.checkpoint, map_location='cpu')
     config = checkpoint['cfg']
     score_file, index_file = get_cached_files(opt.set)
+    df = None
 
     if opt.set == 'val':
         logging.info('Validating! Using subfolder {}'.format(opt.train_subfolder))
@@ -231,27 +232,27 @@ def main(opt):
     if opt.linear_assignment:
         assert opt.enable_cached_scores and os.path.exists(score_file)
         logging.info('Using cached scores. Linear assignment search')
-        result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=1000, use_rank=True)
-        df = None
+        result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=1000, use_rank=False)
     else:
         if opt.enable_cached_scores and os.path.exists(score_file):
             logging.info('Using cached scores. Standard search')
             result_indexes = knn_search_from_cached_scores(n_samples, opt.set, opt.k)
-            la_row, la_col = compute_indexes_stats(opt)
-            scores = sp.load_npz(score_file)
-            indexes = np.load(index_file)
-            scores = scores[la_row, :]
-            indexes = indexes[la_row]
-            result_indexes_aug = linear_assignment_search(opt.set, opt.k, top_scores=1000, use_rank=False, index_override=indexes, score_override=scores)
-            # merge
-            assert len(result_indexes_aug) == len(la_row)
-            for r, ind in zip(result_indexes_aug, la_row):
-                r = [int(k) for k in r]
-                result_indexes[ind] = r
-            df = None
+            if opt.linear_assignment_enhancement:
+                logging.info('Using linear assignment to enhance standard search')
+                la_row, la_col = compute_indexes_stats(opt)
+                scores = sp.load_npz(score_file)
+                indexes = np.load(index_file)
+                scores = scores[la_row, :]
+                indexes = indexes[la_row]
+                result_indexes_aug = linear_assignment_search(opt.set, opt.k, top_scores=1000, use_rank=False, index_override=indexes, score_override=scores)
+                # merge
+                assert len(result_indexes_aug) == len(la_row)
+                for r, ind in zip(result_indexes_aug, la_row):
+                    r = [int(k) for k in r]
+                    result_indexes[ind] = r
         else:
             if opt.set == 'test':
-                df = utils.create_test_pd(opt.data_dir)
+                df = utils.create_test_pd(opt.data_dir, opt.test_subfolder)
             elif opt.set == 'val':
                 df = create_val_df(config, opt)
             # test_df = test_df[:1200]
@@ -299,7 +300,7 @@ def main(opt):
 
         if opt.submission_file:
             if df is None:
-                df = utils.create_test_pd(opt.data_dir)
+                df = utils.create_test_pd(opt.data_dir, opt.test_subfolder)
             # convert ids to captions
             pbar = tqdm.tqdm(result_indexes)
             pbar.set_description('Assemble final table')
@@ -348,9 +349,12 @@ if __name__ == '__main__':
     parser.add_argument('--img_cache', type=str, default=None, help='Path to images')
     parser.add_argument('--set', type=str, default='test', choices=['test', 'val'], help='Which set to use for inference')
     parser.add_argument('--linear_assignment', action='store_true', help='Enable linear assignment')
+    parser.add_argument('--linear_assignment_enhancement', action='store_true', help='Use linear assignment only for enhancing the standard search')
     parser.add_argument('--compute_la_stats', type=str, default=None, help='If a json file is specified, this is where where la stats are saved')
     parser.add_argument('--disable_cached_scores', action='store_true', help='Disables loading of the cached scores')
     parser.add_argument('--train_subfolder', type=str, default='full', help='Which train feather files are used (for constructing the validation set')
+    parser.add_argument('--test_subfolder', type=str, default='original',
+                        help='Which test subfolder to use')
     parser.add_argument('--bs', type=int, default=64)
     parser.add_argument('--scores_dir', type=str, default='cached_scores', help='Directory where score cache files are placed')
     parser.add_argument('--print_example_results', action='store_true', help='Print example results. Only works when set=val')

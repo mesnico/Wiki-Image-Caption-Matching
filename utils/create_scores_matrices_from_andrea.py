@@ -2,12 +2,15 @@ import numpy as np
 from scipy import sparse as sp
 import os
 import tqdm
+from scipy.stats import rankdata
 
 in_folder = 'scores_0_1000'
 out_folder = 'andrea_scores_cache'
 
 score_file = 'cached_scores_test.npz'
 index_file = 'cached_indexes_test.npy'
+
+use_rank = 'log-tiebreak'
 
 if __name__ == '__main__':
     if not os.path.exists(out_folder):
@@ -27,10 +30,21 @@ if __name__ == '__main__':
         tuples = stream.split(',')
         idxs, scores = zip(*[t.split(':') for t in tuples])
         idxs = [int(i) for i in idxs]
-        scores = [float(s) for s in scores]
+        scores = np.array([float(s) for s in scores])
+        if use_rank is not None:
+            if use_rank == 'linear':
+                scores = 1000 - np.arange(1000)
+            elif use_rank == 'log':
+                scores = np.log(1001) - np.log(np.arange(1, 1001))
+            elif use_rank == 'log-tiebreak':
+                ranks = rankdata(-scores)
+                scores = np.log(1001) - np.log(ranks)
+
+            # convert scores to rank and override model scores
+            # np.log(1002) - np.log(np.arange(2, 1002))
 
         row_index = int(os.path.splitext(fname)[0])
-        scores_mat[row_index, idxs] = np.array(scores)
+        scores_mat[row_index, idxs] = scores
         indexes_mat[row_index] = np.array(idxs)
 
     # dump on files

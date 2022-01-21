@@ -103,7 +103,10 @@ class WikipediaDataset(Dataset):
 
         # img = np.array(img)
         # caption = random.choice(self.data.at[index, "caption_title_and_reference_description"])
-        caption = self.data.at[index, "caption_title_and_reference_description"]
+        if 'caption_title_and_reference_description_translated' in self.data.columns:
+            caption = self.data.at[index, "caption_title_and_reference_description_translated"]
+        else:
+            caption = self.data.at[index, "caption_title_and_reference_description"]
         caption = caption.replace("[SEP]", "</s>")  # sep token for xlm-roberta
         caption_inputs = self.tokenizer.encode_plus(
             caption,
@@ -115,12 +118,17 @@ class WikipediaDataset(Dataset):
         caption_ids = caption_inputs['input_ids']
         caption_mask = caption_inputs['attention_mask']
 
-        url = self.data.at[index, "image_url"]
-        url = url.rsplit('/', 1)
-        url = url[0] if len(url)==1 else url[1]
-        url = unquote(url)
-        url = url.replace('_', ' ')
-        url = os.path.splitext(url)[0]
+        if 'image_url_translated' in self.data.columns:
+            # get data from Andrea's translated img_urls (already cleaned up)
+            url = self.data.at[index, "image_url_translated"]
+        else:
+            # we need to clean
+            url = self.data.at[index, "image_url"]
+            url = url.rsplit('/', 1)
+            url = url[0] if len(url)==1 else url[1]
+            url = unquote(url)
+            url = url.replace('_', ' ')
+            url = os.path.splitext(url)[0]
         url_inputs = self.tokenizer.encode_plus(
             url,
             truncation=True,
