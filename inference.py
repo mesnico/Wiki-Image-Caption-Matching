@@ -1,6 +1,9 @@
 import torch
 import argparse
 import logging
+
+from dcg import ndcg_from_ranking
+
 logging.basicConfig(level = logging.INFO)
 
 from torch.utils.data import DataLoader
@@ -32,7 +35,7 @@ def get_cached_files(set):
 
 def knn_search_from_cached_scores(npts, set, topk=5):
     indexes = np.load(get_cached_files(set)[1])
-    indexes = indexes[:, :topk]
+    indexes = indexes[:, :topk].astype(np.int32)
     return indexes.tolist()
 
     # inds, _ = utils.sparse_topk(scores, k=topk, reverse=True, return_mat=False)
@@ -112,7 +115,7 @@ def linear_assignment_search(set, topk=5, top_scores=1000, use_rank=False, score
         #dense_scores = np.take(dense_scores, indexes[:, top_scores:], axis=1)
         scores = sp.csr_matrix(dense_scores)
 
-    result = np.empty((npts, topk))
+    result = np.empty((npts, topk)).astype(np.int32)
     # scores = np.load(SCORES_CACHE)
     for i in tqdm.trange(topk):
         row_ind, col_ind = sp.csgraph.min_weight_full_bipartite_matching(scores, maximize=True)
@@ -122,7 +125,7 @@ def linear_assignment_search(set, topk=5, top_scores=1000, use_rank=False, score
     return result
 
 
-def compute_recall(items, topk):
+def compute_metrics(items, topk):
     """
     Text->Images (Image Search)
     Images: (N, K) matrix of images
@@ -134,6 +137,8 @@ def compute_recall(items, topk):
 
     ranks = np.zeros(npts)
     pbar = tqdm.trange(npts)
+    ndcgs5 = np.zeros(npts)
+    ndcgs10 = np.zeros(npts)
     pbar.set_description('Validation')
     for index in pbar:
 
@@ -144,14 +149,22 @@ def compute_recall(items, topk):
         else:
             ranks[index] = a[0][0]
 
+        # compute ndcg@5, ndcg@10
+        rel = np.zeros(npts)
+        rel[index] = 1  # binary relevances
+        ndcgs5[index] = ndcg_from_ranking(rel, items[index][:5])
+        ndcgs10[index] = ndcg_from_ranking(rel, items[index][:10])
+
     # Compute metrics
     r1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
     r5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
     r10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)
+    ndcg5 = np.mean(ndcgs5)
+    ndcg10 =np.mean(ndcgs10)
     medr = np.floor(np.median(ranks)) + 1
     meanr = ranks.mean() + 1
 
-    return {'r1':r1, 'r5': r5, 'r10':r10}
+    return {'r1':r1, 'r5': r5, 'r10':r10, 'ndcg5': ndcg5, 'ndcg10': ndcg10}
 
 
 import pdb
@@ -194,7 +207,7 @@ def compute_la_stats(opt):
     top_k_scores = list(range(300, 1000, 50))
     for t in tqdm.tqdm(top_k_scores):
         result_indexes = linear_assignment_search(opt.set, opt.k, top_scores=t)
-        metrics = compute_recall(result_indexes, topk=opt.k)
+        metrics = compute_metrics(result_indexes, topk=opt.k)
         row = {'top_scores': t, 'r1': metrics['r1'], 'r5': metrics['r5']}
         rows.append(row)
         print(row)
@@ -211,6 +224,15 @@ def create_val_df(config, opt):
     valid_idx = all_idxs[:val_samples]
     df = df.loc[valid_idx]
     return df
+
+def create_andrea_val_df(config, opt):
+    val_dir = 'andrea_validation'
+    print('Using validation folder {}'.format(val_dir))
+    url_pd = pd.read_csv(os.path.join(val_dir, 'validation.tsv'), sep='\t')
+    captions_pd = pd.read_csv(os.path.join(val_dir, 'validation_caption_list.csv'))
+    assert len(url_pd) == len(captions_pd)
+    val_pd = pd.concat([url_pd, captions_pd], axis=1)
+    return val_pd
 
 
 def main(opt):
@@ -254,7 +276,7 @@ def main(opt):
             if opt.set == 'test':
                 df = utils.create_test_pd(opt.data_dir, opt.test_subfolder)
             elif opt.set == 'val':
-                df = create_val_df(config, opt)
+                df = create_andrea_val_df(config, opt)
             # test_df = test_df[:1200]
 
             # Load datasets and create dataloaders
@@ -281,58 +303,56 @@ def main(opt):
             query_feats, caption_feats, _ = evaluation.encode_data(model, test_dataloader)
             result_indexes = exhaustive_knn_search(query_feats, caption_feats, opt.set, topk=opt.k, gpu=True, cache_scores=opt.enable_cached_scores)
 
-    if opt.set == 'test':
-        # if in test mode, output files for the submission
-        if opt.output_indexes:
-            logging.info('Saving indexes in {}'.format(opt.output_indexes))
-            if not os.path.exists(opt.output_indexes):
-                os.makedirs(opt.output_indexes)
-            chunks_size = 1000
-            num_chunks = opt.k // chunks_size
-            for i in tqdm.trange(num_chunks):
-                b = i * chunks_size
-                e = (i + 1) * chunks_size
-                fname = os.path.join(opt.output_indexes, 'indexes_{}_{}'.format(b, e) + '.csv')
-                result_indexes_cut = [o[b:e] for o in result_indexes]
-                with open(fname, "w", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerows(result_indexes_cut)
+    # if in test mode (or also validation, why not), output files for the submission
+    if opt.output_indexes:
+        logging.info('Saving indexes in {}'.format(opt.output_indexes))
+        if not os.path.exists(opt.output_indexes):
+            os.makedirs(opt.output_indexes)
+        chunks_size = 1000
+        num_chunks = opt.k // chunks_size
+        for i in tqdm.trange(num_chunks):
+            b = i * chunks_size
+            e = (i + 1) * chunks_size
+            fname = os.path.join(opt.output_indexes, 'indexes_{}_{}'.format(b, e) + '.csv')
+            result_indexes_cut = [o[b:e] for o in result_indexes]
+            with open(fname, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerows(result_indexes_cut)
 
-        if opt.submission_file:
-            if df is None:
-                df = utils.create_test_pd(opt.data_dir, opt.test_subfolder)
-            # convert ids to captions
-            pbar = tqdm.tqdm(result_indexes)
-            pbar.set_description('Assemble final table')
-            final_dframes = [] # pd.DataFrame()
-            for i, topk_idxs in enumerate(pbar):
-                topk_idxs = topk_idxs[:5]   # only the top-5 results are evaluated
-                captions_df = df.iloc[topk_idxs]
-                captions_df['id'] = [i] * len(topk_idxs)
-                final_dframes.append(captions_df) # = pd.concat([final_df, captions_df])
+    if opt.submission_file:
+        if df is None:
+            df = utils.create_test_pd(opt.data_dir, opt.test_subfolder)
+        # convert ids to captions
+        pbar = tqdm.tqdm(result_indexes)
+        pbar.set_description('Assemble final table')
+        final_dframes = [] # pd.DataFrame()
+        for i, topk_idxs in enumerate(pbar):
+            topk_idxs = topk_idxs[:5]   # only the top-5 results are evaluated
+            captions_df = df.iloc[topk_idxs]
+            captions_df['id'] = [i] * len(topk_idxs)
+            final_dframes.append(captions_df) # = pd.concat([final_df, captions_df])
 
-            final_df = pd.concat(final_dframes)
-            final_df = final_df[["id", "caption_title_and_reference_description"]]
-            final_df.to_csv(opt.submission_file, index=False)
+        final_df = pd.concat(final_dframes)
+        final_df = final_df[["id", "caption_title_and_reference_description"]]
+        final_df.to_csv(opt.submission_file, index=False)
 
-    else:
-        if opt.print_example_results:
-            if df is None:
-                df = create_val_df(config, opt)
-            for i, query_res in enumerate(result_indexes[:200]):
-                gt_row = df.iloc[i]
-                print('[{}]: Query: {}'.format(i, gt_row["image_url"]))
-                print('[{}]: GT: {}'.format(i, gt_row["caption_title_and_reference_description"]))
-                print(' - Found:')
-                for res in query_res:
-                    res = int(res)
-                    retrieved_item = df.iloc[res]
-                    print('- - [{}]: {} - {}'.format(res, retrieved_item["image_url"], retrieved_item["caption_title_and_reference_description"]))
+    if opt.print_example_results:
+        if df is None:
+            df = create_val_df(config, opt)
+        for i, query_res in enumerate(result_indexes[:200]):
+            gt_row = df.iloc[i]
+            print('[{}]: Query: {}'.format(i, gt_row["image_url"]))
+            print('[{}]: GT: {}'.format(i, gt_row["caption_title_and_reference_description"]))
+            print(' - Found:')
+            for res in query_res:
+                res = int(res)
+                retrieved_item = df.iloc[res]
+                print('- - [{}]: {} - {}'.format(res, retrieved_item["image_url"], retrieved_item["caption_title_and_reference_description"]))
 
-                print('------')
+            print('------')
 
         # validate on the val set
-        metrics = compute_recall(result_indexes, topk=opt.k)
+        metrics = compute_metrics(result_indexes, topk=opt.k)
         print(metrics)
     logging.info('DONE')
 

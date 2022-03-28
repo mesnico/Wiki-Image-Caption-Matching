@@ -1,4 +1,5 @@
 import os
+import random
 from urllib.parse import unquote
 from io import BytesIO
 
@@ -19,11 +20,13 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data._utils.collate import default_collate
 
-def url_to_image(cache_path, img_url, force_cache=False, cache_write_if_not_exists=False):   # TODO here, get hash of url and store the file in the cache_path
+def url_to_image(cache_path, img_url, force_cache=False, cache_write_if_not_exists=False):
     if cache_path is not None:
         file_name = uuid.uuid5(uuid.NAMESPACE_URL, img_url)
         file_name = os.path.join(cache_path, '{}.jpg'.format(file_name))
         if os.path.exists(file_name):
+            # logging.warning('Bad trick is being used! Remove return None here')
+            # return None
             try:
                 img = Image.open(file_name).convert("RGB")
                 return img
@@ -87,8 +90,9 @@ class WikipediaDataset(Dataset):
             img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"], force_cache=False)
             if self.split != 'test':
                 # while img is None:  # TODO: better way to handle missing images?
+                #     print('RETRYING...')
                 #     index = random.randint(0, len(self.data) - 1)
-                #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"])
+                #     img = url_to_image(self.training_img_cache, self.data.at[index, "image_url"], force_cache=False)
                 if img is None:
                     logging.warning('Image {} not existing.'.format(self.data.at[index, "image_url"]))
                     return None
