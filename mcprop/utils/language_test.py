@@ -1,4 +1,4 @@
-import utils
+from mcprop import utils
 from urllib.parse import unquote
 import os
 import fasttext
