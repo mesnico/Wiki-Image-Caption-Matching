@@ -1,4 +1,4 @@
-# WIkipedia Image Caption Matching
+# The Caption Rerank (CRank) Network
 
 ## Setup
 
