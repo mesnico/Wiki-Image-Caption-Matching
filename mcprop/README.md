@@ -2,6 +2,10 @@
 
 The Multi-modal Caption Proposal (MCProp) Network aims at learning a compact common space where the visual information can be used to easily search for candidate captions. This space is embedded with cosine similarity, and efficient k-nn search is performed to retrieve the top-k relevant captions.
 
+<p align="center">
+<img alt="The MCProp Network" src="mcprop.png" width="900px">
+</p>
+
 ## Installation
 First, clone this repo and move into it.
 
