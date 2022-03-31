@@ -226,7 +226,7 @@ def create_val_df(config, opt):
     return df
 
 def create_andrea_val_df(config, opt):
-    val_dir = 'andrea_validation'
+    val_dir = os.path.join(opt.data_dir, 'crank_validation')
     print('Using validation folder {}'.format(val_dir))
     url_pd = pd.read_csv(os.path.join(val_dir, 'validation.tsv'), sep='\t')
     captions_pd = pd.read_csv(os.path.join(val_dir, 'validation_caption_list.csv'))
@@ -351,9 +351,11 @@ def main(opt):
 
             print('------')
 
+    if opt.set == 'val':
         # validate on the val set
         metrics = compute_metrics(result_indexes, topk=opt.k)
         print(metrics)
+
     logging.info('DONE')
 
 if __name__ == '__main__':
