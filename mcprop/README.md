@@ -26,7 +26,11 @@ tar -xvf data.tar
 ## Extract Images from CSVs
 _Note: this step is required only if you want to also use images to train the network_
 
-TODO
+To extract and save images from CSVs run the following command:
+```bash
+python3 utils/save_images.py --images_path ../data/image_data_train/image_pixels --output_path ../data/image_data_train/images
+```
+
 
 ## Train
 
