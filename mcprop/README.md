@@ -17,20 +17,22 @@ export PYTHONPATH=.
 ```
 
 ## Download Data
-Download and extract pre-built data:
+Download `data.tar.gz` from [here](https://drive.google.com/drive/folders/1aYXNBrLHqG8mKTFGgE1LriXZ56jD5itg?usp=sharing), and extract it:
 ```
-TODO: download data.tar.gz
-tar -xvf data.tar
+tar -xvf data.tar.gz
 ```
 
 ## Extract Images from CSVs
-_Note: this step is required only if you want to also use images to train the network_
+_Note: this step is required only if you want to also use images during inference or to train the network_
 
-To extract and save images from CSVs run the following command:
+First, download and extract `image_data_train` from [here](https://storage.cloud.google.com/wikimedia-image-caption-public/image_data_train.tar). Note that this requires hundreds of GB of data storage.
+Then, run the following command:
 ```bash
-python3 utils/save_images.py --images_path ../data/image_data_train/image_pixels --output_path ../data/image_data_train/images
+python utils/save_images.py --images_path kaggle_data/image_data_train/image_pixels --output_path /path/to/img/folder
 ```
+This will convert base64 images encoded into CSVs into appropriate image files into `/path/to/img/folder`. This path will be used in the training and inference commands through the `--img_cache` option (see below).
 
+If you need to perform inference on the test set, you also need to repeat the same procedure by downloading `image_data_test` directly from [Kaggle](https://www.kaggle.com/competitions/wikipedia-image-caption/data).
 
 ## Train
 
@@ -56,6 +58,8 @@ Final training notes:
 - If you experience instabilities during training, you can first train without images using the `baseline.yaml` configuration, which does not use hard negative sampling. Once pre-trained, you can then fine-tune this model, loading it using the `--load_model runs/path/to/model/model_best_fold0.pt` option in the previous commands.
 
 ## Inference
+If you want, you can use our **pre-trained model**, downloading `checkpoint_maxviolation_attentivefusion.pt` from [here](https://drive.google.com/drive/folders/1aYXNBrLHqG8mKTFGgE1LriXZ56jD5itg?usp=sharing) and passing it to the `--checkpoint` option (see below).
+
 To perform inference on the validation set, you can use the following command:
 ```
 python inference.py --data_dir data --checkpoint runs/path/to/experiment/model_best_fold0.pt --img_cache /path/to/images --k 1000 --bs 32 --set val 
