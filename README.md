@@ -21,4 +21,10 @@ These are two separate modules located in the `mcprop` and `crank` folders respe
 ## Citation
 If you find this work useful for your research, please cite our paper:
 
-TODO
+    @article{messina2022transformer,
+      title={Transformer-Based Multi-modal Proposal and Re-Rank for Wikipedia Image-Caption Matching},
+      author={Messina, Nicola and Coccomini, Davide Alessandro and Esuli, Andrea and Falchi, Fabrizio},
+      journal={arXiv e-prints},
+      pages={arXiv--2206},
+      year={2022}
+    }
